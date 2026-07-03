@@ -748,19 +748,63 @@ def launch_gui():
 
     # ---------------- transfer handlers ----------------
     def make_peer_handler(who, pinned_fp, cname):
+        """
+        Callback verifikasi fingerprint peer.
+
+        Return
+        ------
+        True
+            Peer dipercaya, transfer boleh dilanjutkan.
+
+        False
+            Fingerprint tidak cocok, koneksi HARUS dihentikan.
+
+        None
+            Belum ada fingerprint tersimpan (TOFU / first contact).
+        """
+
         def handler(peer_raw):
+
             fp_full = fp_hex_full(peer_raw)
             net["last_peer_fp"] = fp_full
             card = fingerprint_card(peer_raw)
-            if pinned_fp:
-                if hmac.compare_digest(pinned_fp, fp_full):
-                    ui(lambda: write_log(f"✓ {who} TERVERIFIKASI (cocok kontak '{cname}').", OK))
-                else:
-                    ui(lambda: write_log(f"⚠ BAHAYA: fingerprint {who} TIDAK cocok kontak "
-                                         f"'{cname}' — kemungkinan MITM! Batalkan.", ERR))
-            else:
-                ui(lambda: write_log(f"Fingerprint {who} (verifikasi lewat jalur luar,\n"
-                                     f"lalu '＋ Simpan' untuk pin ke kontak):\n{card}", ACCENT))
+
+            # -------------------------------
+            # Belum pernah mengenal peer
+            # -------------------------------
+            if not pinned_fp:
+                ui(lambda: write_log(
+                    f"Fingerprint {who} belum dikenal.\n"
+                    f"Verifikasi melalui jalur luar, kemudian simpan kontak.\n\n"
+                    f"{card}",
+                    ACCENT
+                ))
+                return None
+
+            # -------------------------------
+            # Fingerprint cocok
+            # -------------------------------
+            if hmac.compare_digest(pinned_fp, fp_full):
+                ui(lambda: write_log(
+                    f"✓ {who} berhasil diverifikasi "
+                    f"(kontak '{cname}')",
+                    OK
+                ))
+                return True
+
+            # -------------------------------
+            # Fingerprint tidak cocok
+            # -------------------------------
+            ui(lambda: write_log(
+                f"✗ FINGERPRINT {who} BERBEDA!\n"
+                f"Kontak : {cname}\n"
+                f"Transfer dibatalkan.\n"
+                f"Kemungkinan terjadi Man-in-the-Middle Attack.",
+                ERR
+            ))
+
+            return False
+
         return handler
 
     def do_send():
