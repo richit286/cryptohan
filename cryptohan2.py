@@ -1,23 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-CryptoHan - Enkripsi + Fingerprint + Kirim Langsung (LAN) + Auto-Dekripsi
-==========================================================================
-Fitur:
-  1. Enkripsi/dekripsi file: AES-256-GCM & RSA-2048 Hybrid.
-  2. Verifikasi FINGERPRINT kunci (anti-MITM).
-  3. KONTAK: daftarkan & simpan alamat IP penerima (nama, IP, port, fingerprint).
-  4. KIRIM LANGSUNG ke IP penerima lewat channel Noise_XX (forward secrecy + auth),
-     kedua sisi online berbarengan.
-  5. AUTO-DEKRIPSI di sisi penerima begitu file tiba (RSA-Hybrid: pakai kunci
-     privat penerima; AES: minta password).
 
-Dependensi:
-    pip install cryptography            (wajib)
-    pip install noiseprotocol           (untuk Kirim Langsung)
-
-Format .enc:  [4B 'FCH1'][1B algo_id][payload]
-"""
 
 import os
 import json
@@ -307,11 +290,18 @@ def send_file(host, port, file_path, static_priv_raw, on_peer=None):
         _send_frame(s, n.write_message())
         n.read_message(_recv_frame(s))
         _send_frame(s, n.write_message())
+
         peer = _rs_public_raw(hs)
         if on_peer:
-            on_peer(peer)
+            verified = on_peer(peer)
+            if verified is False:
+                raise ConnectionError(
+                    "Peer fingerprint mismatch. "
+                    "Transfer dibatalkan."
+                )
         header = struct.pack(">H", len(fname)) + fname + struct.pack(">Q", len(data))
         _send_frame(s, n.encrypt(header))
+
         for i in range(0, len(data), CHUNK):
             _send_frame(s, n.encrypt(data[i:i + CHUNK]))
         return peer, len(data)
@@ -338,9 +328,16 @@ def receive_file(port, out_dir, static_priv_raw, on_peer=None, stop_flag=None):
         n.read_message(_recv_frame(conn))
         _send_frame(conn, n.write_message())
         n.read_message(_recv_frame(conn))
+
         peer = _rs_public_raw(hs)
         if on_peer:
-            on_peer(peer)
+            verified = on_peer(peer)
+            if verified is False:
+                raise ConnectionError(
+                    "Peer fingerprint mismatch. "
+                    "Koneksi ditolak."
+                )
+
         header = n.decrypt(_recv_frame(conn))
         flen = struct.unpack(">H", header[:2])[0]
         fname = header[2:2 + flen].decode("utf-8", "replace")
