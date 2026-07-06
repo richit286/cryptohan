@@ -1,4 +1,15 @@
-"""Transport aman (Noise_XX streaming + checksum + anti-replay + abort)."""
+"""Transport aman (Noise_XX streaming + checksum + anti-replay + abort).
+
+Setelah handshake Noise_XX selesai, kedua pihak sudah tahu fingerprint statis
+lawan bicara. Sebelum satu byte data file pun dikirim, penerima mengirim
+frame terenkripsi ACCEPT/REJECT berdasarkan hasil pengecekan fingerprint
+pengirim terhadap `expected_fp` miliknya, dan pengirim WAJIB membaca frame
+itu sebelum mengirim header/isi file. Ini mencegah dua hal:
+  1) file terkirim ke pihak yang penerima sendiri sudah tolak (boros +
+     berisiko bila lawan bicara ternyata MITM aktif dengan handshake valid),
+  2) pengirim mendapat exception socket mentah (bukan pesan error yang jelas)
+     ketika penerima menutup koneksi karena fingerprint tak cocok.
+"""
 
 import os
 import json
@@ -18,9 +29,10 @@ except Exception:
 
 from .config import (
     NOISE_NAME, NET_CHUNK, SOCKET_TIMEOUT, MAX_FILE_SIZE, REPLAY_WINDOW_SEC,
-    MAX_CONCURRENT, FILE_CHUNK, TransportError, ensure_identity_dir,
+    MAX_CONCURRENT, FILE_CHUNK, TransportError, FingerprintMismatchError, ensure_identity_dir,
 )
 from .fingerprint import fp_hex_full
+from .logging_setup import get_logger
 
 
 def _send_frame(sock, data): sock.sendall(struct.pack(">I", len(data)) + data)
@@ -108,7 +120,17 @@ def send_file(host, port, file_path, static_priv_raw,
         if on_peer:
             on_peer(peer)
         if expected_fp and not hmac.compare_digest(expected_fp, peer_fp):
-            raise TransportError("Fingerprint penerima TIDAK cocok kontak — abort (MITM?).")
+            get_logger().warning(
+                f"SECURITY fingerprint_mismatch role=sender remote={host}:{port} peer_fp={peer_fp}")
+            raise FingerprintMismatchError("Fingerprint penerima TIDAK cocok kontak — abort (MITM?).")
+
+        reply = n.decrypt(_recv_frame(s))
+        if reply != b"ACCEPT":
+            get_logger().warning(
+                f"SECURITY peer_rejected role=sender remote={host}:{port} peer_fp={peer_fp} reply={reply!r}")
+            raise FingerprintMismatchError(
+                "Penerima MENOLAK koneksi: fingerprint pengirim tak cocok kontak (MITM?).")
+
         header = {"name": _safe_name(file_path), "size": size, "sha256": sha,
                   "uuid": uuid.uuid4().hex, "ts": time.time()}
         _send_frame(s, n.encrypt(json.dumps(header).encode("utf-8")))
@@ -171,7 +193,11 @@ class Receiver:
             peer = _rs_public_raw(hs); peer_fp = fp_hex_full(peer)
             self.on_peer(peer)
             if self.expected_fp and not hmac.compare_digest(self.expected_fp, peer_fp):
+                get_logger().warning(
+                    f"SECURITY fingerprint_mismatch role=receiver remote={addr[0]}:{addr[1]} peer_fp={peer_fp}")
+                _send_frame(conn, n.encrypt(b"REJECT:fingerprint"))
                 self.on_result("mitm", peer_fp); return   # ABORT, tak terima file
+            _send_frame(conn, n.encrypt(b"ACCEPT"))
 
             header = json.loads(n.decrypt(_recv_frame(conn)).decode("utf-8"))
             size = int(header["size"]); sha_expected = str(header["sha256"])
@@ -179,9 +205,11 @@ class Receiver:
             fname = _safe_name(header["name"])
             if size < 0 or size > MAX_FILE_SIZE:
                 _send_frame(conn, n.encrypt(b"ERR:size"))
+                get_logger().warning(f"SECURITY size_rejected remote={addr[0]}:{addr[1]} peer_fp={peer_fp}")
                 self.on_result("error", "Ukuran file ditolak."); return
             if not _check_and_record(uuid_hex, ts):
                 _send_frame(conn, n.encrypt(b"ERR:replay"))
+                get_logger().warning(f"SECURITY replay_rejected remote={addr[0]}:{addr[1]} peer_fp={peer_fp}")
                 self.on_result("replay", "Ditolak (replay / timestamp basi)."); return
 
             out_path = os.path.join(self.out_dir, fname)
@@ -201,6 +229,7 @@ class Receiver:
                 except OSError:
                     pass
                 _send_frame(conn, n.encrypt(b"ERR:checksum"))
+                get_logger().warning(f"SECURITY checksum_mismatch remote={addr[0]}:{addr[1]} peer_fp={peer_fp}")
                 self.on_result("checksum_fail", "Checksum tak cocok — file dihapus."); return
             _send_frame(conn, n.encrypt(b"OK"))
             self.on_result("received", out_path)

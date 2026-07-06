@@ -34,6 +34,10 @@ class TransportError(Exception):
     pass
 
 
+class FingerprintMismatchError(TransportError):
+    """Fingerprint statis lawan bicara tak cocok dengan yang dipin — indikasi MITM."""
+
+
 def ensure_identity_dir():
     os.makedirs(IDENTITY_DIR, exist_ok=True)
     try:

@@ -120,3 +120,42 @@ def test_mitm_abort_on_fingerprint_mismatch(tmp_path):
     finally:
         rcv.stop()
         t.join(timeout=2)
+
+
+@pytest.mark.skipif(not HAS_NOISE, reason="noiseprotocol tidak terpasang")
+def test_sender_gets_clean_error_when_receiver_rejects_fingerprint(tmp_path):
+    """Receiver menolak fingerprint pengirim -> sender harus dapat
+    FingerprintMismatchError yang bersih, bukan exception socket mentah
+    (BrokenPipeError/ConnectionResetError) akibat koneksi ditutup paksa."""
+    src = tmp_path / "plain.bin"
+    src.write_bytes(os.urandom(1000))
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+
+    sender_priv = _raw_identity(tmp_path, "sender")
+    receiver_priv = _raw_identity(tmp_path, "receiver")
+    port = _free_port()
+
+    results = {}
+    rcv = Receiver(port, str(out_dir), receiver_priv, expected_fp="0" * 64,
+                   on_result=lambda status, info: results.update(status=status, info=info))
+    t = threading.Thread(target=rcv.serve_forever, daemon=True)
+    t.start()
+    try:
+        deadline = time.time() + 2
+        while time.time() < deadline:
+            try:
+                socket.create_connection(("127.0.0.1", port), timeout=0.2).close()
+                break
+            except OSError:
+                time.sleep(0.05)
+
+        from cryptohan.config import FingerprintMismatchError
+        with pytest.raises(FingerprintMismatchError):
+            send_file("127.0.0.1", port, str(src), sender_priv)
+    finally:
+        rcv.stop()
+        t.join(timeout=2)
+
+    assert results["status"] == "mitm"
+    assert not any(out_dir.iterdir())   # tidak ada file yang diterima/ditulis

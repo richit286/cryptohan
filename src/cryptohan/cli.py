@@ -5,7 +5,7 @@ import argparse
 import getpass
 import sys
 
-from .config import ALGO_AES, ALGO_RSA, DEFAULT_PORT, CryptoError, TransportError
+from .config import ALGO_AES, ALGO_RSA, DEFAULT_PORT, CryptoError, TransportError, FingerprintMismatchError
 from .crypto import encrypt_stream, decrypt_stream, peek_algorithm, decrypted_out_path, auto_decrypt
 from .keys import (
     generate_rsa_keypair, generate_transport_identity, load_public_key, load_private_key,
@@ -147,6 +147,9 @@ def _cmd_receive(args):
                     state["code"] = 1
         else:
             print(f"\n{status}: {info}", file=sys.stderr)
+            # mitm = penolakan keamanan (fingerprint tak cocok) -> kode khusus
+            # supaya skrip/monitoring pemanggil bisa membedakannya dari error biasa.
+            state["code"] = 2 if status == "mitm" else 1
 
     def on_peer(peer_raw):
         from .fingerprint import fp_hex_full
@@ -269,6 +272,9 @@ def main(argv=None):
         return 1
     try:
         return args.func(args)
+    except FingerprintMismatchError as e:
+        print(f"Error keamanan: {e}", file=sys.stderr)
+        return 2
     except (CryptoError, TransportError) as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
