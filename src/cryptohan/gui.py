@@ -9,7 +9,11 @@ from .logging_setup import get_logger
 from .crypto import (
     peek_algorithm, encrypt_stream, decrypt_stream, decrypted_out_path, auto_decrypt,
 )
-from .keys import generate_rsa_keypair, load_public_key, load_private_key, ensure_transport_identity, load_transport_private_raw, transport_public_raw_from_private
+from .keys import (
+    generate_rsa_keypair, load_public_key, load_private_key, ensure_transport_identity,
+    load_transport_private_raw, transport_public_raw_from_private,
+    get_default_privkey, set_default_privkey,
+)
 from .fingerprint import fp_card, fp_key_card, fp_hex_full
 from .contacts import load_contacts, upsert_contact, remove_contact
 from .transport import HAS_NOISE, send_file, Receiver
@@ -37,6 +41,7 @@ def launch_gui():
 
     mode_var = tk.StringVar(value="encrypt"); algo_var = tk.StringVar(value="AES-256-GCM")
     infile_var = tk.StringVar(); keyfile_var = tk.StringVar(); show_pw = tk.BooleanVar()
+    default_privkey = get_default_privkey()
     ip_var = tk.StringVar(value="127.0.0.1"); port_var = tk.StringVar(value=str(DEFAULT_PORT))
     contact_var = tk.StringVar(); autodec_var = tk.BooleanVar(value=True)
     net = {"recv": None, "thread": None, "last_peer_fp": None, "last_pct": -1}
@@ -160,7 +165,9 @@ def launch_gui():
 
     # ---------------- enkripsi/dekripsi ----------------
     def on_mode_change():
-        infile_var.set(""); keyfile_var.set(""); pw_entry.delete(0, "end"); refresh()
+        infile_var.set(""); pw_entry.delete(0, "end")
+        keyfile_var.set(get_default_privkey() or "" if mode_var.get() == "decrypt" else "")
+        refresh()
 
     def pick_infile():
         if mode_var.get() == "decrypt":
@@ -177,6 +184,9 @@ def launch_gui():
         if not p:
             return
         keyfile_var.set(p)
+        if mode_var.get() == "decrypt":
+            set_default_privkey(p)
+            write_log(f"Kunci privat ini dijadikan default (dipakai otomatis saat auto-dekripsi berikutnya): {p}", MUTED)
         try:
             write_log("Fingerprint kunci ini — cocokkan dengan lawan:\n" +
                       fp_key_card(p, password=pw_entry.get().strip() or None), ACCENT)
@@ -422,13 +432,15 @@ def launch_gui():
         algo_id, name = info
         try:
             if algo_id == ALGO_RSA:
-                kp = keyfile_var.get().strip()
+                kp = keyfile_var.get().strip() or get_default_privkey() or ""
                 if not kp:
                     kp = filedialog.askopenfilename(
                         title="RSA-Hybrid diterima — pilih PRIVATE key untuk dekripsi",
                         filetypes=[("Kunci PEM", "*.pem"), ("Semua", "*.*")])
                     if not kp:
                         write_log("Auto-dekripsi dilewati (tanpa kunci privat).", MUTED); return
+                    set_default_privkey(kp)
+                    write_log(f"Kunci privat ini dijadikan default untuk auto-dekripsi berikutnya: {kp}", MUTED)
                 priv = load_private_key(kp, password=pw_entry.get().strip() or None)
                 dn, out = auto_decrypt(enc_path, private_key=priv, progress=set_progress)
             else:
@@ -438,6 +450,11 @@ def launch_gui():
                     write_log("Auto-dekripsi dilewati (tanpa password).", MUTED); return
                 dn, out = auto_decrypt(enc_path, password=pw, progress=set_progress)
             write_log(f"✓ Auto-dekripsi [{dn}] → {out}", OK)
+            try:
+                os.remove(enc_path)
+                write_log(f"🗑 File .enc dihapus (hanya hasil dekripsi yang disimpan): {enc_path}", MUTED)
+            except OSError as e:
+                write_log(f"⚠ Gagal menghapus .enc ({enc_path}): {e}", ERR, "warning")
             messagebox.showinfo("Auto-dekripsi sukses", f"File didekripsi:\n{out}")
         except Exception as e:
             write_log(f"✗ Auto-dekripsi gagal: {e}", ERR, "error")
@@ -451,6 +468,8 @@ def launch_gui():
     root.protocol("WM_DELETE_WINDOW", on_close)
     refresh(); refresh_contacts()
     write_log(f"{APP_NAME} {APP_VERSION} siap. Log: {os.path.join(IDENTITY_DIR, 'cryptohan.log')}", ACCENT)
+    if default_privkey:
+        write_log(f"Kunci privat default (dipakai otomatis saat auto-dekripsi): {default_privkey}", MUTED)
     if not HAS_NOISE:
         write_log("Fitur transfer nonaktif — pasang: pip install noiseprotocol", MUTED, "warning")
     log.info("Aplikasi dijalankan.")

@@ -80,3 +80,25 @@ def ensure_transport_identity():
         generate_transport_identity(priv, pub)
     secure_chmod(priv)
     return priv, pub
+
+
+def _default_privkey_pointer_path():
+    return os.path.join(ensure_identity_dir(), "default_privkey.path")
+
+
+def get_default_privkey():
+    """Path kunci privat RSA yang terakhir dipin sebagai default, atau None
+    bila belum pernah diset atau file-nya sudah tak ada lagi di disk."""
+    try:
+        with open(_default_privkey_pointer_path(), encoding="utf-8") as f:
+            path = f.read().strip()
+    except OSError:
+        return None
+    return path if path and os.path.isfile(path) else None
+
+
+def set_default_privkey(path):
+    pointer = _default_privkey_pointer_path()
+    with open(pointer, "w", encoding="utf-8") as f:
+        f.write(path)
+    secure_chmod(pointer)

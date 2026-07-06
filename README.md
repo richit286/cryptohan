@@ -48,7 +48,7 @@ pip install -e ".[transport,dev]"
    git clone <repo-ini> cryptohan && cd cryptohan
    python3 -m venv .venv
    source .venv/bin/activate
-   pip install -e ".[transport,dev]"
+      
    ```
 
 3. Jalankan:
@@ -124,6 +124,8 @@ Kode inti ada di `src/cryptohan/`, dipecah per tanggung jawab (tanpa duplikasi l
 | `cli.py` | Antarmuka command-line (argparse) |
 
 `legacy/` berisi dua versi awal aplikasi ini (`cryptohan.py`, `cryptohan2.py`) yang sudah sepenuhnya digantikan oleh `src/cryptohan/` — dipertahankan hanya untuk referensi historis.
+
+Penjelasan detail cara kerja verifikasi fingerprint dan protokol transport (Noise_XX): lihat [docs/fingerprint-dan-transport.md](docs/fingerprint-dan-transport.md).
 
 ## Testing
 

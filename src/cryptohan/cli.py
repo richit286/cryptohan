@@ -3,6 +3,7 @@ inti yang sama dengan GUI (`cryptohan.gui`), tanpa duplikasi logika."""
 
 import argparse
 import getpass
+import os
 import sys
 
 from .config import ALGO_AES, ALGO_RSA, DEFAULT_PORT, CryptoError, TransportError, FingerprintMismatchError
@@ -10,6 +11,7 @@ from .crypto import encrypt_stream, decrypt_stream, peek_algorithm, decrypted_ou
 from .keys import (
     generate_rsa_keypair, generate_transport_identity, load_public_key, load_private_key,
     ensure_transport_identity, load_transport_private_raw,
+    get_default_privkey, set_default_privkey,
 )
 from .fingerprint import fp_key_card
 from .contacts import load_contacts, upsert_contact, remove_contact
@@ -136,12 +138,25 @@ def _cmd_receive(args):
             print(f"\nOK: file diterima -> {info}")
             if args.auto_decrypt:
                 try:
-                    if args.privkey:
-                        priv = load_private_key(args.privkey, password=args.keypassword)
+                    algo_info = peek_algorithm(info)
+                    if algo_info and algo_info[0] == ALGO_RSA:
+                        privkey_path = args.privkey or get_default_privkey()
+                        if not privkey_path:
+                            raise CryptoError(
+                                "File RSA-Hybrid diterima, tapi tidak ada --privkey maupun "
+                                "kunci privat default (lihat 'cryptohan keygen --kind rsa' / GUI).")
+                        priv = load_private_key(privkey_path, password=args.keypassword)
+                        if args.privkey:
+                            set_default_privkey(args.privkey)
                         dn, out = auto_decrypt(info, private_key=priv)
                     else:
                         dn, out = auto_decrypt(info, password=args.password)
                     print(f"OK: auto-dekripsi [{dn}] -> {out}")
+                    try:
+                        os.remove(info)
+                        print(f"OK: file .enc dihapus (hanya hasil dekripsi disimpan): {info}")
+                    except OSError as e:
+                        print(f"Peringatan: gagal menghapus .enc ({info}): {e}", file=sys.stderr)
                 except Exception as e:
                     print(f"Error: auto-dekripsi gagal: {e}", file=sys.stderr)
                     state["code"] = 1
@@ -244,7 +259,10 @@ def build_parser():
     sp.add_argument("--expect-fingerprint", help="Fingerprint hex pengirim yang wajib cocok")
     sp.add_argument("--auto-decrypt", action="store_true")
     sp.add_argument("--password", help="Password AES untuk auto-dekripsi")
-    sp.add_argument("--privkey", help="Private key PEM untuk auto-dekripsi RSA-Hybrid")
+    sp.add_argument("--privkey",
+        help="Private key PEM untuk auto-dekripsi RSA-Hybrid. Bila dikosongkan, "
+             "dipakai kunci privat default (dari pemakaian --privkey/GUI sebelumnya). "
+             "Bila diisi, path ini otomatis disimpan sebagai default baru.")
     sp.add_argument("--keypassword", help="Password untuk membuka private key, jika ada")
     sp.set_defaults(func=_cmd_receive)
 
